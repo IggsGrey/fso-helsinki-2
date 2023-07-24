@@ -1,7 +1,8 @@
+require('dotenv').config()
 const express = require('express')
-const fs = require('fs')
 const morgan = require('morgan')
 const cors = require('cors')
+const Person = require("./database/models/Person")
 
 
 const app = express()
@@ -27,99 +28,140 @@ const morganMiddleware = morgan(function (tokens, req, res) {
 app.use(morganMiddleware)
 
 
-
-// maybe make this a function later
-const persons = JSON.parse(fs.readFileSync('./db.json', 'utf-8'))
-
-
-const generateId = (existing_ids) => {
-    const max = 9e9
-    const id = Math.floor(Math.random() * max)
-
-    // avoid duplicates
-    if(existing_ids.includes(id)) {
-        return generateId()
-    }
-
-    return id
-}
-
-
-app.get('/api/persons', (req, res) => {
-    res.json(persons)
+app.get('/api/persons', (req, res, next) => {
+    Person
+    .find({})
+    .then(persons => {
+        res.json(persons)
+    })
+    .catch(error => next(error))
 })
 
-app.post('/api/persons', (req, res) => {
+app.post('/api/persons', (req, res, next) => {
+    Person
+    .find({})
+    .then(persons => {
+        const { name, number } = req.body
 
-    const { name, number } = req.body
+        const nameErrors = []
+        const numberErrors = []
 
-    const nameErrors = []
-    const numberErrors = []
+        if (!name) {
+            nameErrors.push('The name field is required')
+        }
+        if (persons.some(person => person.name === name)) {
+            nameErrors.push('The name already exists')
+        }
+        if (!number) {
+            numberErrors.push('The number field is required')
+        }
 
-    if (!name) {
-        nameErrors.push('The name field is required')
-    }
-    if (persons.some(person => person.name === name)) {
-        nameErrors.push('The name already exists')
-    }
-    if (!number) {
-        numberErrors.push('The number field is required')
-    }
-    if (isNaN(number)) {
-        numberErrors.push('The value of the number field should be a number')
-    }
+        if (nameErrors.length || numberErrors.length) {
+            res.status(422).json({
+                error: [...nameErrors, ...numberErrors][0]
+            })
+            // res.status(422).json({
+            //     errors: {
+            //         name: nameErrors,
+            //         number: numberErrors,
+            //     }
+            // })
+            return
+        }
 
-    if(nameErrors.length || numberErrors.length) {
-        res.status(422).json({
-            errors: {
-                name: nameErrors,
-                number: numberErrors,
-            }
+
+        const person = {
+            name,
+            number,
+        }
+
+        const new_person = new Person(person)
+
+        new_person
+        .save()
+        .then(() => {
+            res.statusMessage = "New person created successfully"
+            res.status(201).json(new_person)
         })
-        return
-    }
+        .catch(error => {
+            console.log('we caught the error')
+            next(error)
+        })
+    })
+    .catch(error => next(error))
+})
 
+app.get('/api/persons/:id', (req, res, next) => {
+    const id = req.params.id;
+
+    Person
+    .findById(id)
+    .then(person => {
+        if(person) {
+            res.json(person)
+        } else {
+            res.statusMessage = `Person with id ${id} not found`
+            res.status(404).end()
+        }
+    })
+    .catch(error => next(error))
+})
+
+app.delete('/api/persons/:id', (req, res, next) => {
+    const id = req.params.id
+
+    Person
+    .findByIdAndRemove(id)
+    .then(result => {
+        res.status(204).end()
+    })
+    .catch(error => next(error))
+})
+
+app.put('/api/persons/:id', (req, res, next) => {
+    const id = req.params.id
 
     const person = {
-        id: generateId(persons.map(p => p.id)),
-        name,
-        number,
+        name: req.body.name,
+        number: req.body.number,
     }
 
-    const new_persons = persons.concat(person)
-
-    fs.writeFileSync('db.json', JSON.stringify(new_persons))
-
-    res.statusMessage = "New person created successfully"
-    res.status(201).json(new_persons)
+    Person
+    .findByIdAndUpdate(id, person, { new: true })
+    .then(updatedPerson => {
+        res.status(201).json(updatedPerson)
+    })
+    .catch(error => next(error))
 })
 
-app.get('/api/persons/:id', (req, res) => {
-    const id = Number(req.params.id);
+app.get('/info', (req, res, next) => {
+    Person
+    .find({})
+    .then(persons => {
+        const content = `Phonebook has info for ${persons.length} people<br /><br />${(new Date).toString()}`;
+        res.send(content)
+    })
+    .catch(error => next(error))
+})
 
-    const person = persons.find(person => person.id === id)
 
-    if(person) {
-        res.json(person)
-    } else {
-        res.statusMessage = `Person with id ${id} not found`
-        res.status(404).end()
+
+
+
+
+const errorHandler = (error, request, response, next) => {
+    console.log(`Error details, name is ${error.name}, ${error.message}`)
+
+    if (error.name === 'ValidationError') {
+        return response.status(422).json({ error: error.message })
     }
 
-})
+    next(error)
+}
 
-app.delete('/api/persons/:id', (req, res) => {
-    const id = Number(req.params.id)
-    const new_persons = persons.filter(person => person.id !== id)
+// this has to be the last loaded middleware.
+app.use(errorHandler)
 
-    fs.writeFileSync('db.json', JSON.stringify(new_persons))
-    res.status(204).json(new_persons)
-})
-
-app.get('/info', (req, res) => {
-    const content = `Phonebook has info for ${persons.length} people<br /><br />${(new Date).toString()}`;
-    res.send(content)
-})
 
 
 
